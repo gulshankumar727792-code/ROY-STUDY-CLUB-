@@ -1,0 +1,468 @@
+{
+  "entities": {
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Verified Owner Admin UID authorization record.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID of the Owner Admin" },
+        "email": { "type": "string", "description": "Verified email of the Owner Admin" },
+        "label": { "type": "string", "description": "Admin display label" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "StudentProfile": {
+      "title": "StudentProfile",
+      "description": "Private Class 10 Bihar Board student profile, server-enforced VIP membership status, and locked referral attribution.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "district": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "boardClass": { "type": "string" },
+        "vipActive": { "type": "boolean" },
+        "vipPlanId": { "type": "string", "description": "NONE, REFERRAL_BONUS, or active/historical VIP plan ID" },
+        "vipExpiresAt": { "type": "string", "format": "date-time", "description": "VIP expiry timestamp controlled only by Owner Admin or trusted backend" },
+        "giftEligible": { "type": "boolean" },
+        "referralCode": { "type": "string" },
+        "referredByUid": { "type": "string" },
+        "referredByCode": { "type": "string" },
+        "referralLocked": { "type": "boolean" },
+        "successfulReferrals": { "type": "integer" },
+        "earnedVipDays": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp via FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp via FieldValue.serverTimestamp()" }
+      },
+      "required": ["userId", "fullName", "email", "boardClass", "vipActive", "vipPlanId", "giftEligible", "createdAt", "updatedAt"]
+    },
+    "Subject": {
+      "title": "Subject",
+      "description": "Class 10 Bihar Board subject and chapter list managed by Owner Admin.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "nameHindi": { "type": "string" },
+        "chapters": { "type": "array" },
+        "displayOrder": { "type": "integer" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "nameHindi", "chapters", "displayOrder", "active", "createdAt", "updatedAt"]
+    },
+    "StudyTest": {
+      "title": "StudyTest",
+      "description": "Published or draft Daily Test, VIP Test, or VIP Practice Set metadata.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "subjectId": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "chapterName": { "type": "string" },
+        "testDate": { "type": "string" },
+        "availableFrom": { "type": "string" },
+        "closingDate": { "type": "string" },
+        "durationMinutes": { "type": "integer" },
+        "passingPercentage": { "type": "integer" },
+        "marksPerQuestion": { "type": "integer" },
+        "testCategory": { "type": "string", "enum": ["DAILY", "CHAPTER_TEST", "WEEKLY_MEGA", "VIP_TEST", "VIP_PRACTICE"] },
+        "weekKey": { "type": "string" },
+        "questionCount": { "type": "integer" },
+        "published": { "type": "boolean" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "subjectId", "subjectName", "chapterName", "testDate", "durationMinutes", "testCategory", "weekKey", "questionCount", "published", "createdBy", "createdAt", "updatedAt"]
+    },
+    "TestPaper": {
+      "title": "TestPaper",
+      "description": "Protected question set document for a single test (up to 200 manually authored or bulk-parsed questions).",
+      "type": "object",
+      "properties": {
+        "testId": { "type": "string" },
+        "testCategory": { "type": "string", "enum": ["DAILY", "CHAPTER_TEST", "WEEKLY_MEGA", "VIP_TEST", "VIP_PRACTICE"] },
+        "published": { "type": "boolean" },
+        "questions": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["testId", "testCategory", "published", "questions", "createdAt", "updatedAt"]
+    },
+    "TestAttempt": {
+      "title": "TestAttempt",
+      "description": "Single immutable student attempt per test keyed by {testId}_{userId}.",
+      "type": "object",
+      "properties": {
+        "testId": { "type": "string" },
+        "testTitle": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "chapterName": { "type": "string" },
+        "testCategory": { "type": "string", "enum": ["DAILY", "CHAPTER_TEST", "WEEKLY_MEGA", "VIP_TEST", "VIP_PRACTICE"] },
+        "weekKey": { "type": "string" },
+        "userId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "selectedAnswers": { "type": "array" },
+        "correctCount": { "type": "integer" },
+        "wrongCount": { "type": "integer" },
+        "skippedCount": { "type": "integer" },
+        "totalQuestions": { "type": "integer" },
+        "marksPerQuestion": { "type": "integer" },
+        "totalMarks": { "type": "integer" },
+        "passingPercentage": { "type": "integer" },
+        "score": { "type": "integer" },
+        "timeTakenSeconds": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["testId", "testTitle", "subjectName", "chapterName", "testCategory", "weekKey", "userId", "studentName", "selectedAnswers", "correctCount", "wrongCount", "skippedCount", "totalQuestions", "score", "timeTakenSeconds", "createdAt"]
+    },
+    "WeeklyLeaderboardEntry": {
+      "title": "WeeklyLeaderboardEntry",
+      "description": "Non-PII weekly competition score summary keyed by {weekKey}_{userId}.",
+      "type": "object",
+      "properties": {
+        "weekKey": { "type": "string" },
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "district": { "type": "string" },
+        "vipBadge": { "type": "boolean" },
+        "totalCorrect": { "type": "integer" },
+        "totalMarks": { "type": "integer" },
+        "totalQuestionsAttempted": { "type": "integer" },
+        "testsCount": { "type": "integer" },
+        "totalTimeSeconds": { "type": "integer" },
+        "countedTestIds": { "type": "array" },
+        "lastAttemptTestId": { "type": "string" },
+        "publicVisible": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["weekKey", "userId", "displayName", "district", "vipBadge", "totalCorrect", "totalMarks", "totalQuestionsAttempted", "testsCount", "totalTimeSeconds", "countedTestIds", "lastAttemptTestId", "publicVisible", "createdAt", "updatedAt"]
+    },
+    "WeeklyChampion": {
+      "title": "WeeklyChampion",
+      "description": "Admin-verified Weekly Champion announcement and gift/offer history without private contact info.",
+      "type": "object",
+      "properties": {
+        "weekKey": { "type": "string" },
+        "weekLabel": { "type": "string" },
+        "winnerUserId": { "type": "string" },
+        "winnerName": { "type": "string" },
+        "winnerDistrict": { "type": "string" },
+        "totalCorrect": { "type": "integer" },
+        "totalMarks": { "type": "integer" },
+        "totalTimeSeconds": { "type": "integer" },
+        "testsCount": { "type": "integer" },
+        "giftDetails": { "type": "string" },
+        "specialOffer": { "type": "string" },
+        "videoCallStatus": { "type": "string", "enum": ["PENDING", "SCHEDULED", "COMPLETED"] },
+        "announcementNote": { "type": "string" },
+        "verifiedBy": { "type": "string" },
+        "published": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["weekKey", "weekLabel", "winnerUserId", "winnerName", "winnerDistrict", "totalCorrect", "totalMarks", "totalTimeSeconds", "testsCount", "giftDetails", "specialOffer", "videoCallStatus", "announcementNote", "verifiedBy", "published", "createdAt", "updatedAt"]
+    },
+    "PaymentRequest": {
+      "title": "PaymentRequest",
+      "description": "Student VIP membership WhatsApp payment verification request.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentPhone": { "type": "string" },
+        "planId": { "type": "string", "description": "Official or dynamic VIP plan document ID" },
+        "planName": { "type": "string" },
+        "amountInr": { "type": "integer" },
+        "originalPriceInr": { "type": "integer" },
+        "discountPercent": { "type": "integer" },
+        "appliedOfferName": { "type": "string" },
+        "hasSpecialGift": { "type": "boolean" },
+        "durationDays": { "type": "integer" },
+        "transactionRef": { "type": "string" },
+        "note": { "type": "string" },
+        "hasScreenshot": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "adminRemark": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "activatedUntil": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "studentName", "studentPhone", "planId", "planName", "amountInr", "durationDays", "transactionRef", "hasScreenshot", "status", "createdAt", "updatedAt"]
+    },
+    "PaymentProof": {
+      "title": "PaymentProof",
+      "description": "Private compressed payment screenshot proof linked 1:1 with a PaymentRequest.",
+      "type": "object",
+      "properties": {
+        "requestId": { "type": "string" },
+        "userId": { "type": "string" },
+        "imageBase64": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["requestId", "userId", "imageBase64", "createdAt"]
+    },
+    "VipNote": {
+      "title": "VipNote",
+      "description": "VIP Special Note metadata published by Owner Admin.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "chapterName": { "type": "string" },
+        "summary": { "type": "string" },
+        "published": { "type": "boolean" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "subjectName", "chapterName", "summary", "published", "createdBy", "createdAt", "updatedAt"]
+    },
+    "VipNoteContent": {
+      "title": "VipNoteContent",
+      "description": "Protected full body of a VIP Special Note accessible only to active VIP members and Owner Admin.",
+      "type": "object",
+      "properties": {
+        "noteId": { "type": "string" },
+        "content": { "type": "string" },
+        "keyPoints": { "type": "array" },
+        "published": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["noteId", "content", "keyPoints", "published", "createdAt", "updatedAt"]
+    },
+    "ReferralConfig": {
+      "title": "ReferralConfig",
+      "description": "Global Referral & Earn settings controlled by Owner Admin.",
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "rewardDays": { "type": "integer" },
+        "maxSuccessfulReferrals": { "type": "integer" },
+        "updatedBy": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["enabled", "rewardDays", "maxSuccessfulReferrals", "updatedBy", "updatedAt"]
+    },
+    "ReferralCodeLookup": {
+      "title": "ReferralCodeLookup",
+      "description": "Non-PII lookup document mapping a unique referral code to its owner UID and display name.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "ownerUid", "ownerName", "active", "createdAt"]
+    },
+    "ReferralRecord": {
+      "title": "ReferralRecord",
+      "description": "Single referral attribution record keyed by referredUid to prevent duplicate referrals.",
+      "type": "object",
+      "properties": {
+        "referrerUid": { "type": "string" },
+        "referrerName": { "type": "string" },
+        "referredUid": { "type": "string" },
+        "referredName": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "SUCCESSFUL", "REJECTED"] },
+        "firstDailyTestCompleted": { "type": "boolean" },
+        "firstDailyTestId": { "type": "string" },
+        "firstDailyTestTitle": { "type": "string" },
+        "firstDailyTestAt": { "type": "string", "format": "date-time" },
+        "rewardGranted": { "type": "boolean" },
+        "rewardDays": { "type": "integer" },
+        "rejectionReason": { "type": "string" },
+        "processedBy": { "type": "string" },
+        "rewardedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["referrerUid", "referrerName", "referredUid", "referredName", "referralCode", "status", "firstDailyTestCompleted", "rewardGranted", "rewardDays", "createdAt", "updatedAt"]
+    },
+    "ReferralTransaction": {
+      "title": "ReferralTransaction",
+      "description": "Immutable auditable reward transaction credited by Cloud Function or Owner Admin.",
+      "type": "object",
+      "properties": {
+        "referralId": { "type": "string" },
+        "beneficiaryUid": { "type": "string" },
+        "beneficiaryName": { "type": "string" },
+        "counterpartyUid": { "type": "string" },
+        "counterpartyName": { "type": "string" },
+        "role": { "type": "string", "enum": ["REFERRER", "REFERRED"] },
+        "referralCode": { "type": "string" },
+        "rewardDays": { "type": "integer" },
+        "vipExpiresAfter": { "type": "string", "format": "date-time" },
+        "processedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["referralId", "beneficiaryUid", "beneficiaryName", "counterpartyUid", "counterpartyName", "role", "referralCode", "rewardDays", "vipExpiresAfter", "processedBy", "createdAt"]
+    },
+    "FcmDeviceToken": {
+      "title": "FcmDeviceToken",
+      "description": "Private FCM device token and notification preferences for a signed-in student, keyed by userId.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "token": { "type": "string" },
+        "dailyTestAlertsEnabled": { "type": "boolean" },
+        "weeklyChampionAlertsEnabled": { "type": "boolean" },
+        "platform": { "type": "string", "enum": ["android"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "token", "dailyTestAlertsEnabled", "weeklyChampionAlertsEnabled", "platform", "updatedAt"]
+    },
+    "NotificationLog": {
+      "title": "NotificationLog",
+      "description": "Admin-readable server audit log of FCM push notifications dispatched by Cloud Functions.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["DAILY_TEST_PUBLISHED", "WEEKLY_CHAMPION_DECLARED"] },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "refId": { "type": "string" },
+        "targetSummary": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "title", "body", "refId", "targetSummary", "status", "createdAt"]
+    },
+    "DynamicVipPlan": {
+      "title": "DynamicVipPlan",
+      "description": "Server-managed VIP membership plan with dynamic old/new pricing, auto-calculated discount, active/inactive toggle, and duration.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "titleHindi": { "type": "string" },
+        "originalPriceInr": { "type": "integer" },
+        "offerPriceInr": { "type": "integer" },
+        "discountPercent": { "type": "integer" },
+        "durationDays": { "type": "integer" },
+        "durationLabel": { "type": "string" },
+        "hasSpecialGift": { "type": "boolean" },
+        "badge": { "type": "string" },
+        "offerName": { "type": "string" },
+        "active": { "type": "boolean" },
+        "displayOrder": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "titleHindi", "originalPriceInr", "offerPriceInr", "discountPercent", "durationDays", "durationLabel", "hasSpecialGift", "active", "displayOrder", "createdAt", "updatedAt"]
+    },
+    "VipOfferConfig": {
+      "title": "VipOfferConfig",
+      "description": "Global dynamic VIP offer schedule and promotional banner configuration controlled by Owner Admin.",
+      "type": "object",
+      "properties": {
+        "offersEnabled": { "type": "boolean" },
+        "offerName": { "type": "string" },
+        "offerStartDate": { "type": "string" },
+        "offerEndDate": { "type": "string" },
+        "offerStartMillis": { "type": "integer" },
+        "offerEndMillis": { "type": "integer" },
+        "bannerEnabled": { "type": "boolean" },
+        "bannerHeading": { "type": "string" },
+        "bannerDescription": { "type": "string" },
+        "bannerOfferText": { "type": "string" },
+        "bannerDiscountPercent": { "type": "integer" },
+        "bannerColorKey": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["offersEnabled", "offerName", "offerStartDate", "offerEndDate", "offerStartMillis", "offerEndMillis", "bannerEnabled", "bannerHeading", "bannerDescription", "bannerOfferText", "bannerDiscountPercent", "bannerColorKey", "updatedBy", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Owner Admin authorization registry"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/StudentProfile" },
+      "description": "Private student profile, VIP membership state, and locked referral attribution"
+    },
+    "/subjects/{subjectId}": {
+      "schema": { "$ref": "#/entities/Subject" },
+      "description": "Class 10 Bihar Board subjects and syllabus chapters"
+    },
+    "/tests/{testId}": {
+      "schema": { "$ref": "#/entities/StudyTest" },
+      "description": "Daily tests, VIP tests, and VIP practice set metadata"
+    },
+    "/test_papers/{testId}": {
+      "schema": { "$ref": "#/entities/TestPaper" },
+      "description": "Protected manual question bank per test"
+    },
+    "/attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/TestAttempt" },
+      "description": "Single immutable student attempt per test keyed by {testId}_{userId}"
+    },
+    "/weekly_entries/{entryId}": {
+      "schema": { "$ref": "#/entities/WeeklyLeaderboardEntry" },
+      "description": "Public non-PII weekly leaderboard entry keyed by {weekKey}_{userId}"
+    },
+    "/weekly_champions/{weekKey}": {
+      "schema": { "$ref": "#/entities/WeeklyChampion" },
+      "description": "Verified weekly champion announcements and gift history"
+    },
+    "/payment_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/PaymentRequest" },
+      "description": "Student VIP WhatsApp payment verification requests"
+    },
+    "/payment_proofs/{requestId}": {
+      "schema": { "$ref": "#/entities/PaymentProof" },
+      "description": "Private payment screenshot proof images"
+    },
+    "/vip_notes/{noteId}": {
+      "schema": { "$ref": "#/entities/VipNote" },
+      "description": "VIP special study note metadata"
+    },
+    "/vip_note_contents/{noteId}": {
+      "schema": { "$ref": "#/entities/VipNoteContent" },
+      "description": "Protected VIP special study note body"
+    },
+    "/referral_config/{configId}": {
+      "schema": { "$ref": "#/entities/ReferralConfig" },
+      "description": "Global Referral & Earn settings controlled by Owner Admin"
+    },
+    "/referral_codes/{code}": {
+      "schema": { "$ref": "#/entities/ReferralCodeLookup" },
+      "description": "Non-PII unique referral code index"
+    },
+    "/referrals/{referredUid}": {
+      "schema": { "$ref": "#/entities/ReferralRecord" },
+      "description": "Single referral attribution record per referred student"
+    },
+    "/referral_transactions/{txId}": {
+      "schema": { "$ref": "#/entities/ReferralTransaction" },
+      "description": "Immutable auditable referral VIP reward transaction ledger"
+    },
+    "/fcm_tokens/{userId}": {
+      "schema": { "$ref": "#/entities/FcmDeviceToken" },
+      "description": "Private FCM device token and notification subscription preferences per user"
+    },
+    "/notification_logs/{logId}": {
+      "schema": { "$ref": "#/entities/NotificationLog" },
+      "description": "Server-generated FCM push notification dispatch audit logs (Admin-read only)"
+    },
+    "/vip_plans/{planId}": {
+      "schema": { "$ref": "#/entities/DynamicVipPlan" },
+      "description": "Dynamic VIP membership plans managed by Owner Admin without APK updates"
+    },
+    "/vip_offer_config/{configId}": {
+      "schema": { "$ref": "#/entities/VipOfferConfig" },
+      "description": "Global dynamic VIP offer schedule and promotional banner settings"
+    }
+  }
+}

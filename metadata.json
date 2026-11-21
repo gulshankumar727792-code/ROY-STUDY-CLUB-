@@ -1,0 +1,6 @@
+{
+  "name": "Roy Study Club",
+  "description": "Class 10 Bihar Board educational test platform featuring daily tests, weekly champion leaderboards, VIP memberships, WhatsApp payment verification, and a secure Owner Admin Panel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

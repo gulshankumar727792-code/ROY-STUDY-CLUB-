@@ -1,0 +1,854 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 0. Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HARDENED HELPERS ---
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidReferralCode(code) {
+      return code is string && code.size() >= 6 && code.size() <= 16 && code.matches('^[A-Z0-9]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isVerifiedOwnerEmail() {
+      return isSignedIn() &&
+        request.auth.token.email == 'ydharmendrakumar686@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        isVerifiedOwnerEmail() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isActiveVip() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.vipActive == true &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.vipExpiresAt is timestamp &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.vipExpiresAt > request.time;
+    }
+
+    function isReferralSystemEnabled() {
+      return !exists(/databases/$(database)/documents/referral_config/settings) ||
+        get(/databases/$(database)/documents/referral_config/settings).data.enabled == true;
+    }
+
+    function isValidTimestampBound(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    function isLegacyOfficialPlan(planId, amountInr, durationDays) {
+      return (planId == 'PLAN_1M' && amountInr == 99 && durationDays == 30) ||
+             (planId == 'PLAN_3M' && amountInr == 249 && durationDays == 90) ||
+             (planId == 'PLAN_6M' && amountInr == 449 && durationDays == 180) ||
+             (planId == 'PLAN_12M' && amountInr == 999 && durationDays == 365);
+    }
+
+    function isGlobalVipOfferActiveNow() {
+      let cfgPath = /databases/$(database)/documents/vip_offer_config/settings;
+      return exists(cfgPath) &&
+        get(cfgPath).data.offersEnabled == true &&
+        (get(cfgPath).data.offerStartMillis == 0 || request.time.toMillis() >= get(cfgPath).data.offerStartMillis) &&
+        (get(cfgPath).data.offerEndMillis == 0 || request.time.toMillis() <= get(cfgPath).data.offerEndMillis);
+    }
+
+    // Server-side authoritative VIP plan & price verification on NEW payment creation.
+    // Never trusts client UI price alone: checks live /vip_plans/{planId} + /vip_offer_config/settings + request.time.
+    function isAuthorizedNewPlanPurchase(planId, amountInr, durationDays) {
+      let planPath = /databases/$(database)/documents/vip_plans/$(planId);
+      return exists(planPath)
+        ? (
+            get(planPath).data.active == true &&
+            get(planPath).data.durationDays == durationDays &&
+            amountInr == (
+              isGlobalVipOfferActiveNow()
+                ? get(planPath).data.offerPriceInr
+                : get(planPath).data.originalPriceInr
+            )
+          )
+        : isLegacyOfficialPlan(planId, amountInr, durationDays);
+    }
+
+    // --- ENTITY VALIDATION BLUEPRINTS ---
+
+    function isValidAdminRecord(data, adminUid) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'label', 'createdAt']) &&
+        data.uid is string && data.uid == adminUid && data.uid.size() <= 128 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        (!('label' in data) || (data.label is string && data.label.size() <= 80)) &&
+        isValidTimestampBound(data.createdAt);
+    }
+
+    function isValidStudentProfile(data, userId) {
+      return data.keys().hasAll(['userId', 'fullName', 'email', 'boardClass', 'vipActive', 'vipPlanId', 'giftEligible', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'userId', 'fullName', 'email', 'phone', 'district', 'schoolName', 'boardClass',
+          'vipActive', 'vipPlanId', 'vipExpiresAt', 'giftEligible',
+          'referralCode', 'referredByUid', 'referredByCode', 'referralLocked',
+          'successfulReferrals', 'earnedVipDays',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.userId is string && data.userId == userId && data.userId.size() <= 128 &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 80 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 20)) &&
+        (!('district' in data) || (data.district is string && data.district.size() <= 80)) &&
+        (!('schoolName' in data) || (data.schoolName is string && data.schoolName.size() <= 120)) &&
+        data.boardClass is string && data.boardClass == 'Class 10 Bihar Board' &&
+        data.vipActive is bool &&
+        data.vipPlanId is string && isValidId(data.vipPlanId) && data.vipPlanId.size() <= 64 &&
+        (!('vipExpiresAt' in data) || data.vipExpiresAt == null || data.vipExpiresAt is timestamp) &&
+        data.giftEligible is bool &&
+        (!('referralCode' in data) || isValidReferralCode(data.referralCode)) &&
+        (!('referredByUid' in data) || (data.referredByUid is string && data.referredByUid.size() <= 128)) &&
+        (!('referredByCode' in data) || (data.referredByCode is string && data.referredByCode.size() <= 16)) &&
+        (!('referralLocked' in data) || data.referralLocked is bool) &&
+        (!('successfulReferrals' in data) || (data.successfulReferrals is int && data.successfulReferrals >= 0 && data.successfulReferrals <= 1000)) &&
+        (!('earnedVipDays' in data) || (data.earnedVipDays is int && data.earnedVipDays >= 0 && data.earnedVipDays <= 10000)) &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidSubject(data) {
+      return data.keys().hasAll(['name', 'nameHindi', 'chapters', 'displayOrder', 'active', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['name', 'nameHindi', 'chapters', 'displayOrder', 'active', 'createdAt', 'updatedAt']) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        data.nameHindi is string && data.nameHindi.size() <= 80 &&
+        data.chapters is list && data.chapters.size() <= 60 &&
+        (data.chapters.size() == 0 || data.chapters[0] is string) &&
+        data.displayOrder is int && data.displayOrder >= 0 && data.displayOrder <= 100 &&
+        data.active is bool &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidStudyTest(data) {
+      return data.keys().hasAll(['title', 'subjectId', 'subjectName', 'chapterName', 'testDate', 'durationMinutes', 'testCategory', 'weekKey', 'questionCount', 'published', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'title', 'subjectId', 'subjectName', 'chapterName', 'testDate',
+          'availableFrom', 'closingDate', 'passingPercentage', 'marksPerQuestion',
+          'durationMinutes', 'testCategory', 'weekKey', 'questionCount', 'published',
+          'createdBy', 'createdAt', 'updatedAt'
+        ]) &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
+        data.subjectId is string && isValidId(data.subjectId) &&
+        data.subjectName is string && data.subjectName.size() >= 1 && data.subjectName.size() <= 80 &&
+        data.chapterName is string && data.chapterName.size() >= 1 && data.chapterName.size() <= 140 &&
+        data.testDate is string && data.testDate.size() >= 8 && data.testDate.size() <= 20 &&
+        (!('availableFrom' in data) || (data.availableFrom is string && data.availableFrom.size() <= 20)) &&
+        (!('closingDate' in data) || (data.closingDate is string && data.closingDate.size() <= 20)) &&
+        (!('passingPercentage' in data) || (data.passingPercentage is int && data.passingPercentage >= 0 && data.passingPercentage <= 100)) &&
+        (!('marksPerQuestion' in data) || (data.marksPerQuestion is int && data.marksPerQuestion >= 1 && data.marksPerQuestion <= 10)) &&
+        data.durationMinutes is int && data.durationMinutes >= 1 && data.durationMinutes <= 360 &&
+        data.testCategory in ['DAILY', 'CHAPTER_TEST', 'WEEKLY_MEGA', 'VIP_TEST', 'VIP_PRACTICE'] &&
+        data.weekKey is string && data.weekKey.size() >= 6 && data.weekKey.size() <= 16 &&
+        data.questionCount is int && data.questionCount >= 0 && data.questionCount <= 200 &&
+        data.published is bool &&
+        data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidTestPaper(data, testId) {
+      return data.keys().hasAll(['testId', 'testCategory', 'published', 'questions', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['testId', 'testCategory', 'published', 'questions', 'createdAt', 'updatedAt']) &&
+        data.testId is string && data.testId == testId && isValidId(data.testId) &&
+        data.testCategory in ['DAILY', 'CHAPTER_TEST', 'WEEKLY_MEGA', 'VIP_TEST', 'VIP_PRACTICE'] &&
+        data.published is bool &&
+        data.questions is list && data.questions.size() <= 200 &&
+        (data.questions.size() == 0 || data.questions[0] is map) &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidTestAttempt(data) {
+      return data.keys().hasAll(['testId', 'testTitle', 'subjectName', 'chapterName', 'testCategory', 'weekKey', 'userId', 'studentName', 'selectedAnswers', 'correctCount', 'wrongCount', 'skippedCount', 'totalQuestions', 'score', 'timeTakenSeconds', 'createdAt']) &&
+        data.keys().hasOnly([
+          'testId', 'testTitle', 'subjectName', 'chapterName', 'testCategory', 'weekKey',
+          'userId', 'studentName', 'selectedAnswers', 'correctCount', 'wrongCount', 'skippedCount',
+          'totalQuestions', 'marksPerQuestion', 'totalMarks', 'passingPercentage',
+          'score', 'timeTakenSeconds', 'createdAt'
+        ]) &&
+        data.testId is string && isValidId(data.testId) &&
+        data.testTitle is string && data.testTitle.size() >= 1 && data.testTitle.size() <= 140 &&
+        data.subjectName is string && data.subjectName.size() >= 1 && data.subjectName.size() <= 80 &&
+        data.chapterName is string && data.chapterName.size() >= 1 && data.chapterName.size() <= 140 &&
+        data.testCategory in ['DAILY', 'CHAPTER_TEST', 'WEEKLY_MEGA', 'VIP_TEST', 'VIP_PRACTICE'] &&
+        data.weekKey is string && data.weekKey.size() >= 6 && data.weekKey.size() <= 16 &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 80 &&
+        data.selectedAnswers is list && data.selectedAnswers.size() <= 200 &&
+        (data.selectedAnswers.size() == 0 || data.selectedAnswers[0] is int) &&
+        data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 200 &&
+        data.wrongCount is int && data.wrongCount >= 0 && data.wrongCount <= 200 &&
+        data.skippedCount is int && data.skippedCount >= 0 && data.skippedCount <= 200 &&
+        data.totalQuestions is int && data.totalQuestions >= 1 && data.totalQuestions <= 200 &&
+        data.selectedAnswers.size() == data.totalQuestions &&
+        data.correctCount + data.wrongCount + data.skippedCount == data.totalQuestions &&
+        (!('marksPerQuestion' in data) || (data.marksPerQuestion is int && data.marksPerQuestion >= 1 && data.marksPerQuestion <= 10)) &&
+        (!('totalMarks' in data) || (data.totalMarks is int && data.totalMarks == data.totalQuestions * (('marksPerQuestion' in data) ? data.marksPerQuestion : 1))) &&
+        (!('passingPercentage' in data) || (data.passingPercentage is int && data.passingPercentage >= 0 && data.passingPercentage <= 100)) &&
+        data.score is int && data.score == data.correctCount * (('marksPerQuestion' in data) ? data.marksPerQuestion : 1) &&
+        data.timeTakenSeconds is int && data.timeTakenSeconds >= 0 && data.timeTakenSeconds <= 21600 &&
+        isValidTimestampBound(data.createdAt);
+    }
+
+    function isValidWeeklyEntry(data) {
+      return data.keys().hasAll(['weekKey', 'userId', 'displayName', 'district', 'vipBadge', 'totalCorrect', 'totalMarks', 'totalQuestionsAttempted', 'testsCount', 'totalTimeSeconds', 'countedTestIds', 'lastAttemptTestId', 'publicVisible', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['weekKey', 'userId', 'displayName', 'district', 'vipBadge', 'totalCorrect', 'totalMarks', 'totalQuestionsAttempted', 'testsCount', 'totalTimeSeconds', 'countedTestIds', 'lastAttemptTestId', 'publicVisible', 'createdAt', 'updatedAt']) &&
+        data.weekKey is string && data.weekKey.size() >= 6 && data.weekKey.size() <= 16 &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        data.district is string && data.district.size() <= 80 &&
+        data.vipBadge is bool &&
+        data.totalCorrect is int && data.totalCorrect >= 0 && data.totalCorrect <= 5000 &&
+        data.totalMarks is int && data.totalMarks == data.totalCorrect &&
+        data.totalQuestionsAttempted is int && data.totalQuestionsAttempted >= data.totalCorrect && data.totalQuestionsAttempted <= 5000 &&
+        data.testsCount is int && data.testsCount >= 1 && data.testsCount <= 31 &&
+        data.totalTimeSeconds is int && data.totalTimeSeconds >= 0 && data.totalTimeSeconds <= 500000 &&
+        data.countedTestIds is list && data.countedTestIds.size() == data.testsCount && data.countedTestIds.size() <= 31 &&
+        data.countedTestIds[0] is string &&
+        data.lastAttemptTestId is string && isValidId(data.lastAttemptTestId) &&
+        data.publicVisible is bool &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidWeeklyChampion(data, weekKey) {
+      return data.keys().hasAll(['weekKey', 'weekLabel', 'winnerUserId', 'winnerName', 'winnerDistrict', 'totalCorrect', 'totalMarks', 'totalTimeSeconds', 'testsCount', 'giftDetails', 'specialOffer', 'videoCallStatus', 'announcementNote', 'verifiedBy', 'published', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['weekKey', 'weekLabel', 'winnerUserId', 'winnerName', 'winnerDistrict', 'totalCorrect', 'totalMarks', 'totalTimeSeconds', 'testsCount', 'giftDetails', 'specialOffer', 'videoCallStatus', 'announcementNote', 'verifiedBy', 'published', 'createdAt', 'updatedAt']) &&
+        data.weekKey is string && data.weekKey == weekKey && data.weekKey.size() >= 6 && data.weekKey.size() <= 16 &&
+        data.weekLabel is string && data.weekLabel.size() >= 1 && data.weekLabel.size() <= 80 &&
+        data.winnerUserId is string && data.winnerUserId.size() >= 1 && data.winnerUserId.size() <= 128 &&
+        data.winnerName is string && data.winnerName.size() >= 1 && data.winnerName.size() <= 80 &&
+        data.winnerDistrict is string && data.winnerDistrict.size() <= 80 &&
+        data.totalCorrect is int && data.totalCorrect >= 0 && data.totalCorrect <= 5000 &&
+        data.totalMarks is int && data.totalMarks >= 0 && data.totalMarks <= 5000 &&
+        data.totalTimeSeconds is int && data.totalTimeSeconds >= 0 && data.totalTimeSeconds <= 500000 &&
+        data.testsCount is int && data.testsCount >= 0 && data.testsCount <= 31 &&
+        data.giftDetails is string && data.giftDetails.size() <= 300 &&
+        data.specialOffer is string && data.specialOffer.size() <= 300 &&
+        data.videoCallStatus in ['PENDING', 'SCHEDULED', 'COMPLETED'] &&
+        data.announcementNote is string && data.announcementNote.size() <= 500 &&
+        data.verifiedBy is string && data.verifiedBy.size() >= 1 && data.verifiedBy.size() <= 128 &&
+        data.published is bool &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidPaymentRequestShape(data) {
+      return data.keys().hasAll(['userId', 'studentName', 'studentPhone', 'planId', 'planName', 'amountInr', 'durationDays', 'transactionRef', 'hasScreenshot', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'userId', 'studentName', 'studentPhone', 'planId', 'planName',
+          'amountInr', 'originalPriceInr', 'discountPercent', 'appliedOfferName', 'hasSpecialGift',
+          'durationDays', 'transactionRef', 'note', 'hasScreenshot', 'status',
+          'adminRemark', 'reviewedBy', 'reviewedAt', 'activatedUntil', 'createdAt', 'updatedAt'
+        ]) &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 80 &&
+        data.studentPhone is string && data.studentPhone.size() <= 20 &&
+        data.planId is string && isValidId(data.planId) && data.planId.size() <= 64 &&
+        data.planName is string && data.planName.size() >= 1 && data.planName.size() <= 80 &&
+        data.amountInr is int && data.amountInr >= 1 && data.amountInr <= 100000 &&
+        (!('originalPriceInr' in data) || (data.originalPriceInr is int && data.originalPriceInr >= 0 && data.originalPriceInr <= 100000)) &&
+        (!('discountPercent' in data) || (data.discountPercent is int && data.discountPercent >= 0 && data.discountPercent <= 99)) &&
+        (!('appliedOfferName' in data) || (data.appliedOfferName is string && data.appliedOfferName.size() <= 100)) &&
+        (!('hasSpecialGift' in data) || data.hasSpecialGift is bool) &&
+        data.durationDays is int && data.durationDays >= 1 && data.durationDays <= 3650 &&
+        data.transactionRef is string && data.transactionRef.size() >= 2 && data.transactionRef.size() <= 80 &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 300)) &&
+        data.hasScreenshot is bool &&
+        data.status in ['PENDING', 'APPROVED', 'REJECTED'] &&
+        (!('adminRemark' in data) || (data.adminRemark is string && data.adminRemark.size() <= 300)) &&
+        (!('reviewedBy' in data) || (data.reviewedBy is string && data.reviewedBy.size() <= 128)) &&
+        (!('reviewedAt' in data) || data.reviewedAt == null || isValidTimestampBound(data.reviewedAt)) &&
+        (!('activatedUntil' in data) || data.activatedUntil == null || data.activatedUntil is timestamp) &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidPaymentProof(data, requestId) {
+      return data.keys().hasAll(['requestId', 'userId', 'imageBase64', 'createdAt']) &&
+        data.keys().hasOnly(['requestId', 'userId', 'imageBase64', 'createdAt']) &&
+        data.requestId is string && data.requestId == requestId && isValidId(data.requestId) &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.imageBase64 is string && data.imageBase64.size() >= 10 && data.imageBase64.size() <= 350000 &&
+        isValidTimestampBound(data.createdAt);
+    }
+
+    function isValidVipNote(data) {
+      return data.keys().hasAll(['title', 'subjectName', 'chapterName', 'summary', 'published', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'subjectName', 'chapterName', 'summary', 'published', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
+        data.subjectName is string && data.subjectName.size() >= 1 && data.subjectName.size() <= 80 &&
+        data.chapterName is string && data.chapterName.size() >= 1 && data.chapterName.size() <= 140 &&
+        data.summary is string && data.summary.size() <= 300 &&
+        data.published is bool &&
+        data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidVipNoteContent(data, noteId) {
+      return data.keys().hasAll(['noteId', 'content', 'keyPoints', 'published', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['noteId', 'content', 'keyPoints', 'published', 'createdAt', 'updatedAt']) &&
+        data.noteId is string && data.noteId == noteId && isValidId(data.noteId) &&
+        data.content is string && data.content.size() >= 1 && data.content.size() <= 20000 &&
+        data.keyPoints is list && data.keyPoints.size() <= 30 &&
+        (data.keyPoints.size() == 0 || data.keyPoints[0] is string) &&
+        data.published is bool &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidReferralConfig(data) {
+      return data.keys().hasAll(['enabled', 'rewardDays', 'maxSuccessfulReferrals', 'updatedBy', 'updatedAt']) &&
+        data.keys().hasOnly(['enabled', 'rewardDays', 'maxSuccessfulReferrals', 'updatedBy', 'updatedAt']) &&
+        data.enabled is bool &&
+        data.rewardDays is int && data.rewardDays >= 1 && data.rewardDays <= 365 &&
+        data.maxSuccessfulReferrals is int && data.maxSuccessfulReferrals >= 1 && data.maxSuccessfulReferrals <= 500 &&
+        data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128 &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidReferralCodeDoc(data, code) {
+      return data.keys().hasAll(['code', 'ownerUid', 'ownerName', 'active', 'createdAt']) &&
+        data.keys().hasOnly(['code', 'ownerUid', 'ownerName', 'active', 'createdAt']) &&
+        data.code is string && data.code == code && isValidReferralCode(data.code) &&
+        data.ownerUid is string && isValidId(data.ownerUid) &&
+        data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 80 &&
+        data.active is bool &&
+        isValidTimestampBound(data.createdAt);
+    }
+
+    function isValidReferralRecord(data, referredUid) {
+      return data.keys().hasAll(['referrerUid', 'referrerName', 'referredUid', 'referredName', 'referralCode', 'status', 'firstDailyTestCompleted', 'rewardGranted', 'rewardDays', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'referrerUid', 'referrerName', 'referredUid', 'referredName', 'referralCode',
+          'status', 'firstDailyTestCompleted', 'firstDailyTestId', 'firstDailyTestTitle', 'firstDailyTestAt',
+          'rewardGranted', 'rewardDays', 'rejectionReason', 'processedBy', 'rewardedAt',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.referrerUid is string && isValidId(data.referrerUid) &&
+        data.referredUid is string && data.referredUid == referredUid && isValidId(data.referredUid) &&
+        data.referrerUid != data.referredUid &&
+        data.referrerName is string && data.referrerName.size() >= 1 && data.referrerName.size() <= 80 &&
+        data.referredName is string && data.referredName.size() >= 1 && data.referredName.size() <= 80 &&
+        isValidReferralCode(data.referralCode) &&
+        data.status in ['PENDING', 'SUCCESSFUL', 'REJECTED'] &&
+        data.firstDailyTestCompleted is bool &&
+        (!('firstDailyTestId' in data) || (data.firstDailyTestId is string && data.firstDailyTestId.size() <= 128)) &&
+        (!('firstDailyTestTitle' in data) || (data.firstDailyTestTitle is string && data.firstDailyTestTitle.size() <= 140)) &&
+        (!('firstDailyTestAt' in data) || data.firstDailyTestAt == null || isValidTimestampBound(data.firstDailyTestAt)) &&
+        data.rewardGranted is bool &&
+        data.rewardDays is int && data.rewardDays >= 0 && data.rewardDays <= 365 &&
+        (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 300)) &&
+        (!('processedBy' in data) || (data.processedBy is string && data.processedBy.size() <= 128)) &&
+        (!('rewardedAt' in data) || data.rewardedAt == null || isValidTimestampBound(data.rewardedAt)) &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidReferralTransaction(data) {
+      return data.keys().hasAll(['referralId', 'beneficiaryUid', 'beneficiaryName', 'counterpartyUid', 'counterpartyName', 'role', 'referralCode', 'rewardDays', 'vipExpiresAfter', 'processedBy', 'createdAt']) &&
+        data.keys().hasOnly(['referralId', 'beneficiaryUid', 'beneficiaryName', 'counterpartyUid', 'counterpartyName', 'role', 'referralCode', 'rewardDays', 'vipExpiresAfter', 'processedBy', 'createdAt']) &&
+        data.referralId is string && isValidId(data.referralId) &&
+        data.beneficiaryUid is string && isValidId(data.beneficiaryUid) &&
+        data.beneficiaryName is string && data.beneficiaryName.size() >= 1 && data.beneficiaryName.size() <= 80 &&
+        data.counterpartyUid is string && isValidId(data.counterpartyUid) &&
+        data.counterpartyName is string && data.counterpartyName.size() >= 1 && data.counterpartyName.size() <= 80 &&
+        data.role in ['REFERRER', 'REFERRED'] &&
+        isValidReferralCode(data.referralCode) &&
+        data.rewardDays is int && data.rewardDays >= 1 && data.rewardDays <= 365 &&
+        data.vipExpiresAfter is timestamp &&
+        data.processedBy is string && data.processedBy.size() >= 1 && data.processedBy.size() <= 128 &&
+        isValidTimestampBound(data.createdAt);
+    }
+
+    function isValidFcmTokenDoc(data, userId) {
+      return data.keys().hasAll(['userId', 'token', 'dailyTestAlertsEnabled', 'weeklyChampionAlertsEnabled', 'platform', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'token', 'dailyTestAlertsEnabled', 'weeklyChampionAlertsEnabled', 'platform', 'updatedAt']) &&
+        data.userId is string && data.userId == userId && isValidId(data.userId) &&
+        data.token is string && data.token.size() >= 10 && data.token.size() <= 4096 &&
+        data.dailyTestAlertsEnabled is bool &&
+        data.weeklyChampionAlertsEnabled is bool &&
+        data.platform is string && data.platform == 'android' &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidDynamicVipPlan(data) {
+      return data.keys().hasAll([
+          'title', 'titleHindi', 'originalPriceInr', 'offerPriceInr', 'discountPercent',
+          'durationDays', 'durationLabel', 'hasSpecialGift', 'active', 'displayOrder',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'title', 'titleHindi', 'originalPriceInr', 'offerPriceInr', 'discountPercent',
+          'durationDays', 'durationLabel', 'hasSpecialGift', 'badge', 'offerName',
+          'active', 'displayOrder', 'createdAt', 'updatedAt'
+        ]) &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 80 &&
+        data.titleHindi is string && data.titleHindi.size() <= 100 &&
+        data.originalPriceInr is int && data.originalPriceInr >= 1 && data.originalPriceInr <= 100000 &&
+        data.offerPriceInr is int && data.offerPriceInr >= 1 && data.offerPriceInr <= data.originalPriceInr &&
+        data.discountPercent is int && data.discountPercent >= 0 && data.discountPercent <= 99 &&
+        data.durationDays is int && data.durationDays >= 1 && data.durationDays <= 3650 &&
+        data.durationLabel is string && data.durationLabel.size() >= 1 && data.durationLabel.size() <= 80 &&
+        data.hasSpecialGift is bool &&
+        (!('badge' in data) || (data.badge is string && data.badge.size() <= 60)) &&
+        (!('offerName' in data) || (data.offerName is string && data.offerName.size() <= 100)) &&
+        data.active is bool &&
+        data.displayOrder is int && data.displayOrder >= 0 && data.displayOrder <= 100 &&
+        isValidTimestampBound(data.createdAt) &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    function isValidVipOfferConfig(data) {
+      return data.keys().hasAll([
+          'offersEnabled', 'offerName', 'offerStartDate', 'offerEndDate',
+          'offerStartMillis', 'offerEndMillis',
+          'bannerEnabled', 'bannerHeading', 'bannerDescription', 'bannerOfferText',
+          'bannerDiscountPercent', 'bannerColorKey', 'updatedBy', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'offersEnabled', 'offerName', 'offerStartDate', 'offerEndDate',
+          'offerStartMillis', 'offerEndMillis',
+          'bannerEnabled', 'bannerHeading', 'bannerDescription', 'bannerOfferText',
+          'bannerDiscountPercent', 'bannerColorKey', 'updatedBy', 'updatedAt'
+        ]) &&
+        data.offersEnabled is bool &&
+        data.offerName is string && data.offerName.size() <= 100 &&
+        data.offerStartDate is string && data.offerStartDate.size() <= 20 &&
+        data.offerEndDate is string && data.offerEndDate.size() <= 20 &&
+        data.offerStartMillis is int && data.offerStartMillis >= 0 &&
+        data.offerEndMillis is int && data.offerEndMillis >= 0 &&
+        (data.offerStartMillis == 0 || data.offerEndMillis == 0 || data.offerEndMillis >= data.offerStartMillis) &&
+        data.bannerEnabled is bool &&
+        data.bannerHeading is string && data.bannerHeading.size() <= 120 &&
+        data.bannerDescription is string && data.bannerDescription.size() <= 240 &&
+        data.bannerOfferText is string && data.bannerOfferText.size() <= 120 &&
+        data.bannerDiscountPercent is int && data.bannerDiscountPercent >= 0 && data.bannerDiscountPercent <= 99 &&
+        data.bannerColorKey in ['FESTIVE_GOLD', 'ROYAL_BLUE', 'CRIMSON_SALE', 'EMERALD_DEAL', 'PURPLE_MEGA', 'SUNSET_ORANGE'] &&
+        data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128 &&
+        isValidTimestampBound(data.updatedAt);
+    }
+
+    // --- COLLECTION RULES ---
+
+    // 1. Owner Admin Registry
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && isValidId(adminUid) && (request.auth.uid == adminUid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && isValidId(adminUid) && isValidAdminRecord(incoming(), adminUid);
+      allow delete: if isAdmin() && isValidId(adminUid);
+    }
+
+    // 2. Private Student Profiles (Strict PII Isolation + Admin-Only VIP & Referral Reward Mutation)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isSignedIn() &&
+        isValidId(userId) &&
+        isValidStudentProfile(incoming(), userId) &&
+        (
+          isAdmin() ||
+          (
+            isOwner(userId) &&
+            incoming().vipActive == false &&
+            incoming().vipPlanId == 'NONE' &&
+            incoming().giftEligible == false &&
+            (!('vipExpiresAt' in incoming()) || incoming().vipExpiresAt == null) &&
+            (!('successfulReferrals' in incoming()) || incoming().successfulReferrals == 0) &&
+            (!('earnedVipDays' in incoming()) || incoming().earnedVipDays == 0) &&
+            (!('referredByUid' in incoming()) || incoming().referredByUid != request.auth.uid)
+          )
+        );
+
+      allow update: if isSignedIn() &&
+        isValidId(userId) &&
+        isValidStudentProfile(incoming(), userId) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          isAdmin() ||
+          (
+            isOwner(userId) &&
+            incoming().vipActive == existing().vipActive &&
+            incoming().vipPlanId == existing().vipPlanId &&
+            incoming().giftEligible == existing().giftEligible &&
+            (!('vipExpiresAt' in incoming()) ? !('vipExpiresAt' in existing()) : (('vipExpiresAt' in existing()) && incoming().vipExpiresAt == existing().vipExpiresAt)) &&
+            (!('successfulReferrals' in existing())
+              ? (!('successfulReferrals' in incoming()) || incoming().successfulReferrals == 0)
+              : ('successfulReferrals' in incoming() && incoming().successfulReferrals == existing().successfulReferrals)) &&
+            (!('earnedVipDays' in existing())
+              ? (!('earnedVipDays' in incoming()) || incoming().earnedVipDays == 0)
+              : ('earnedVipDays' in incoming() && incoming().earnedVipDays == existing().earnedVipDays)) &&
+            (
+              // Action 1: Normal profile update (referralLocked & attribution immutable)
+              (
+                incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'district', 'schoolName', 'updatedAt'])
+              ) ||
+              // Action 2: One-time referral code backfill for legacy profiles missing referralCode
+              (
+                !('referralCode' in existing()) &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['referralCode', 'referralLocked', 'successfulReferrals', 'earnedVipDays', 'updatedAt']) &&
+                incoming().successfulReferrals == 0 &&
+                incoming().earnedVipDays == 0
+              )
+            )
+          )
+        );
+
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // 3. Subjects & Chapters
+    match /subjects/{subjectId} {
+      allow get: if isSignedIn() && isValidId(subjectId) && (existing().active == true || isAdmin());
+      allow list: if isSignedIn() && (resource.data.active == true || isAdmin());
+      allow create: if isAdmin() && isValidId(subjectId) && isValidSubject(incoming());
+      allow update: if isAdmin() && isValidId(subjectId) && isValidSubject(incoming()) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(subjectId);
+    }
+
+    // 4. Test Metadata (Unpublished Hidden from Students)
+    match /tests/{testId} {
+      allow get: if isSignedIn() && isValidId(testId) && (existing().published == true || isAdmin());
+      allow list: if isSignedIn() && (resource.data.published == true || isAdmin());
+      allow create: if isAdmin() && isValidId(testId) && isValidStudyTest(incoming());
+      allow update: if isAdmin() && isValidId(testId) && isValidStudyTest(incoming()) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(testId);
+    }
+
+    // 5. Protected Test Papers
+    match /test_papers/{testId} {
+      allow get: if isSignedIn() && isValidId(testId) && (
+        isAdmin() ||
+        (
+          existing().published == true &&
+          (existing().testCategory in ['DAILY', 'CHAPTER_TEST', 'WEEKLY_MEGA'] || isActiveVip())
+        )
+      );
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidId(testId) && isValidTestPaper(incoming(), testId);
+      allow update: if isAdmin() && isValidId(testId) && isValidTestPaper(incoming(), testId) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(testId);
+    }
+
+    // 6. Immutable Single-Attempt Test Submissions
+    match /attempts/{attemptId} {
+      allow get: if isSignedIn() && isValidId(attemptId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+
+      allow create: if isSignedIn() &&
+        isValidId(attemptId) &&
+        isValidTestAttempt(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        attemptId == incoming().testId + '_' + request.auth.uid &&
+        exists(/databases/$(database)/documents/tests/$(incoming().testId)) &&
+        get(/databases/$(database)/documents/tests/$(incoming().testId)).data.published == true &&
+        get(/databases/$(database)/documents/tests/$(incoming().testId)).data.testCategory == incoming().testCategory &&
+        (
+          incoming().testCategory in ['DAILY', 'CHAPTER_TEST', 'WEEKLY_MEGA'] ||
+          isActiveVip() ||
+          isAdmin()
+        );
+
+      allow update: if isAdmin() && isValidId(attemptId) && isValidTestAttempt(incoming()) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(attemptId);
+    }
+
+    // 7. Public Non-PII Weekly Competition Leaderboard Entries
+    match /weekly_entries/{entryId} {
+      allow get: if isSignedIn() && isValidId(entryId) && (existing().publicVisible == true || isAdmin());
+      allow list: if isSignedIn() && (resource.data.publicVisible == true || isAdmin());
+
+      allow create: if isSignedIn() &&
+        isValidId(entryId) &&
+        isValidWeeklyEntry(incoming()) &&
+        (
+          isAdmin() ||
+          (
+            incoming().userId == request.auth.uid &&
+            entryId == incoming().weekKey + '_' + request.auth.uid &&
+            incoming().publicVisible == true &&
+            incoming().testsCount == 1 &&
+            existsAfter(/databases/$(database)/documents/attempts/$(incoming().lastAttemptTestId + '_' + request.auth.uid))
+          )
+        );
+
+      allow update: if isSignedIn() &&
+        isValidId(entryId) &&
+        isValidWeeklyEntry(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().weekKey == existing().weekKey &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          isAdmin() ||
+          (
+            existing().userId == request.auth.uid &&
+            entryId == incoming().weekKey + '_' + request.auth.uid &&
+            incoming().publicVisible == true &&
+            incoming().testsCount == existing().testsCount + 1 &&
+            !(incoming().lastAttemptTestId in existing().countedTestIds) &&
+            incoming().lastAttemptTestId in incoming().countedTestIds &&
+            incoming().totalCorrect >= existing().totalCorrect &&
+            incoming().totalTimeSeconds >= existing().totalTimeSeconds &&
+            existsAfter(/databases/$(database)/documents/attempts/$(incoming().lastAttemptTestId + '_' + request.auth.uid)) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'district', 'vipBadge', 'totalCorrect', 'totalMarks',
+              'totalQuestionsAttempted', 'testsCount', 'totalTimeSeconds',
+              'countedTestIds', 'lastAttemptTestId', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isAdmin() && isValidId(entryId);
+    }
+
+    // 8. Verified Weekly Champions & Winner History (Zero PII)
+    match /weekly_champions/{weekKey} {
+      allow get: if isSignedIn() && isValidId(weekKey) && (existing().published == true || isAdmin());
+      allow list: if isSignedIn() && (resource.data.published == true || isAdmin());
+      allow create: if isAdmin() && isValidId(weekKey) && isValidWeeklyChampion(incoming(), weekKey);
+      allow update: if isAdmin() && isValidId(weekKey) && isValidWeeklyChampion(incoming(), weekKey) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(weekKey);
+    }
+
+    // 9. VIP WhatsApp Payment Requests (Admin-Only Approval/Rejection)
+    match /payment_requests/{requestId} {
+      allow get: if isSignedIn() && isValidId(requestId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+
+      allow create: if isSignedIn() &&
+        isValidId(requestId) &&
+        isValidPaymentRequestShape(incoming()) &&
+        isAuthorizedNewPlanPurchase(incoming().planId, incoming().amountInr, incoming().durationDays) &&
+        incoming().userId == request.auth.uid &&
+        incoming().status == 'PENDING' &&
+        !('reviewedBy' in incoming()) &&
+        !('reviewedAt' in incoming()) &&
+        !('activatedUntil' in incoming()) &&
+        !('adminRemark' in incoming());
+
+      allow update: if isAdmin() &&
+        isValidId(requestId) &&
+        isValidPaymentRequestShape(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().planId == existing().planId &&
+        incoming().amountInr == existing().amountInr &&
+        incoming().durationDays == existing().durationDays &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'adminRemark', 'reviewedBy', 'reviewedAt', 'activatedUntil', 'updatedAt'
+        ]);
+
+      allow delete: if isAdmin() && isValidId(requestId);
+    }
+
+    // 10. Private Payment Screenshot Proofs
+    match /payment_proofs/{requestId} {
+      allow get: if isSignedIn() && isValidId(requestId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() &&
+        isValidId(requestId) &&
+        isValidPaymentProof(incoming(), requestId) &&
+        incoming().userId == request.auth.uid &&
+        existsAfter(/databases/$(database)/documents/payment_requests/$(requestId));
+      allow update: if isAdmin() && isValidId(requestId) && isValidPaymentProof(incoming(), requestId);
+      allow delete: if isAdmin() && isValidId(requestId);
+    }
+
+    // 11. VIP Special Notes Metadata
+    match /vip_notes/{noteId} {
+      allow get: if isSignedIn() && isValidId(noteId) && (existing().published == true || isAdmin());
+      allow list: if isSignedIn() && (resource.data.published == true || isAdmin());
+      allow create: if isAdmin() && isValidId(noteId) && isValidVipNote(incoming());
+      allow update: if isAdmin() && isValidId(noteId) && isValidVipNote(incoming()) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(noteId);
+    }
+
+    // 12. Protected VIP Special Note Bodies
+    match /vip_note_contents/{noteId} {
+      allow get: if isSignedIn() && isValidId(noteId) && (
+        isAdmin() ||
+        (existing().published == true && isActiveVip())
+      );
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidId(noteId) && isValidVipNoteContent(incoming(), noteId);
+      allow update: if isAdmin() && isValidId(noteId) && isValidVipNoteContent(incoming(), noteId) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(noteId);
+    }
+
+    // 13. Referral & Earn Global Configuration (Admin-Only Write)
+    match /referral_config/{configId} {
+      allow get: if isSignedIn() && configId == 'settings';
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && configId == 'settings' && isValidReferralConfig(incoming());
+      allow delete: if false;
+    }
+
+    // 14. Referral Code Non-PII Index (Single-Doc Lookup Only; No Listing by Students)
+    match /referral_codes/{code} {
+      allow get: if isSignedIn() && isValidReferralCode(code);
+      allow list: if isAdmin();
+      allow create: if isSignedIn() &&
+        isValidReferralCode(code) &&
+        isValidReferralCodeDoc(incoming(), code) &&
+        (isAdmin() || (incoming().ownerUid == request.auth.uid && incoming().active == true));
+      allow update: if isAdmin() && isValidReferralCode(code) && isValidReferralCodeDoc(incoming(), code);
+      allow delete: if isAdmin() && isValidReferralCode(code);
+    }
+
+    // 15. Referral Attribution Records (Keyed by referredUid -> Zero Duplicates, Zero Self-Referrals, Zero Student Self-Approval)
+    match /referrals/{referredUid} {
+      allow get: if isSignedIn() && isValidId(referredUid) && (
+        isAdmin() ||
+        existing().referrerUid == request.auth.uid ||
+        existing().referredUid == request.auth.uid
+      );
+      allow list: if isSignedIn() && (
+        resource.data.referrerUid == request.auth.uid ||
+        resource.data.referredUid == request.auth.uid ||
+        isAdmin()
+      );
+
+      allow create: if isSignedIn() &&
+        isValidId(referredUid) &&
+        isValidReferralRecord(incoming(), referredUid) &&
+        incoming().referredUid == request.auth.uid &&
+        incoming().referrerUid != request.auth.uid &&
+        incoming().status == 'PENDING' &&
+        incoming().firstDailyTestCompleted == false &&
+        incoming().rewardGranted == false &&
+        incoming().rewardDays == 0 &&
+        !('rejectionReason' in incoming()) &&
+        !('processedBy' in incoming()) &&
+        !('rewardedAt' in incoming()) &&
+        (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.referralLocked != true) &&
+        isReferralSystemEnabled() &&
+        exists(/databases/$(database)/documents/referral_codes/$(incoming().referralCode)) &&
+        get(/databases/$(database)/documents/referral_codes/$(incoming().referralCode)).data.ownerUid == incoming().referrerUid &&
+        get(/databases/$(database)/documents/referral_codes/$(incoming().referralCode)).data.active == true;
+
+      allow update: if isSignedIn() &&
+        isValidId(referredUid) &&
+        isValidReferralRecord(incoming(), referredUid) &&
+        incoming().referrerUid == existing().referrerUid &&
+        incoming().referredUid == existing().referredUid &&
+        incoming().referralCode == existing().referralCode &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          // Action A: Owner Admin approves or rejects (never re-reward an already granted referral)
+          (
+            isAdmin() &&
+            existing().rewardGranted == false &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'rewardGranted', 'rewardDays', 'rejectionReason', 'processedBy', 'rewardedAt', 'updatedAt'
+            ])
+          ) ||
+          // Action B: Referred student records completion of their FIRST Daily Test (cannot self-approve or grant VIP)
+          (
+            existing().referredUid == request.auth.uid &&
+            existing().status == 'PENDING' &&
+            existing().firstDailyTestCompleted == false &&
+            existing().rewardGranted == false &&
+            incoming().status == 'PENDING' &&
+            incoming().rewardGranted == false &&
+            incoming().rewardDays == 0 &&
+            incoming().firstDailyTestCompleted == true &&
+            'firstDailyTestId' in incoming() &&
+            incoming().firstDailyTestId.size() >= 1 &&
+            existsAfter(/databases/$(database)/documents/attempts/$(incoming().firstDailyTestId + '_' + request.auth.uid)) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'firstDailyTestCompleted', 'firstDailyTestId', 'firstDailyTestTitle', 'firstDailyTestAt', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isAdmin() && isValidId(referredUid);
+    }
+
+    // 16. Immutable Auditable Referral Reward Transactions (Zero Student Writes, Append-Only)
+    match /referral_transactions/{txId} {
+      allow get: if isSignedIn() && isValidId(txId) && (
+        existing().beneficiaryUid == request.auth.uid || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.beneficiaryUid == request.auth.uid || isAdmin()
+      );
+      allow create: if isAdmin() && isValidId(txId) && isValidReferralTransaction(incoming());
+      allow update, delete: if false;
+    }
+
+    // 17. Private FCM Device Registration Tokens & Alert Preferences (Strict Owner Isolation)
+    match /fcm_tokens/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isSignedIn() && isValidId(userId) && isOwner(userId) &&
+        isValidFcmTokenDoc(incoming(), userId);
+      allow delete: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+    }
+
+    // 18. Server-Written FCM Push Notification Dispatch Logs (Admin Read-Only, Zero Client Writes)
+    match /notification_logs/{logId} {
+      allow get: if isAdmin() && isValidId(logId);
+      allow list: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // 19. Dynamic VIP Plans (Active Plans Readable by Students; Admin-Only Writes)
+    match /vip_plans/{planId} {
+      allow get: if isSignedIn() && isValidId(planId) && (existing().active == true || isAdmin());
+      allow list: if isSignedIn() && (resource.data.active == true || isAdmin());
+      allow create: if isAdmin() && isValidId(planId) && isValidDynamicVipPlan(incoming());
+      allow update: if isAdmin() && isValidId(planId) && isValidDynamicVipPlan(incoming()) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(planId);
+    }
+
+    // 20. Global Dynamic VIP Offer & Promotional Banner Configuration (Admin-Only Writes)
+    match /vip_offer_config/{configId} {
+      allow get: if isSignedIn() && configId == 'settings';
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && configId == 'settings' && isValidVipOfferConfig(incoming());
+      allow delete: if false;
+    }
+  }
+}

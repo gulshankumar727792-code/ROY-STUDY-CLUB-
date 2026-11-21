@@ -1,0 +1,33 @@
+<resources>
+    <string name="app_name">Roy Study Club</string>
+    <string name="made_by_roy_gulshan">MADE BY ROY GULSHAN</string>
+    <string name="target_board_badge">Class 10 • Bihar Board (BSEB)</string>
+    <string name="splash_tagline">Daily Test • Weekly Champion • VIP Study</string>
+    <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="auth_title">Welcome to Roy Study Club</string>
+    <string name="auth_subtitle">कक्षा 10 बिहार बोर्ड छात्रों के लिए डेली टेस्ट, साप्ताहिक चैंपियन और VIP तैयारी</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_tests">Daily Test</string>
+    <string name="nav_weekly">Champion</string>
+    <string name="nav_vip">VIP</string>
+    <string name="nav_profile">Profile</string>
+    <string name="whatsapp_contact_number">+91 9905537456</string>
+    <string name="whatsapp_contact_cta">Contact on WhatsApp</string>
+    <string name="owner_admin_panel">Owner Admin Panel</string>
+    <string name="sign_out">Sign Out</string>
+    <string name="refer_and_earn">Refer &amp; Earn</string>
+    <string name="refer_and_earn_hindi">रेफर करें और VIP पाएं</string>
+    <string name="copy_referral_code">Copy Code</string>
+    <string name="share_on_whatsapp">Share on WhatsApp</string>
+    <string name="share_referral_link">Share Link</string>
+    <string name="referral_registration_title">Complete Student Registration</string>
+    <string name="referral_management">Referrals</string>
+    <string name="fcm_channel_daily_tests_id">daily_tests_channel</string>
+    <string name="fcm_channel_daily_tests_name">Daily Tests (दैनिक टेस्ट)</string>
+    <string name="fcm_channel_daily_tests_desc">Instant alerts when a new Class 10 Bihar Board Daily Test is published</string>
+    <string name="fcm_channel_weekly_champion_id">weekly_champion_channel</string>
+    <string name="fcm_channel_weekly_champion_name">Weekly Champion (साप्ताहिक चैंपियन)</string>
+    <string name="fcm_channel_weekly_champion_desc">Alerts when Weekly Champions are declared and announced</string>
+    <string name="notifications_settings_title">Push Notifications (FCM)</string>
+    <string name="notifications_enable_cta">Allow Notifications</string>
+</resources>
